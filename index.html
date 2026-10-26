@@ -78,6 +78,17 @@ textarea.in{min-height:72px;resize:vertical;line-height:1.5}
 .chip{display:inline-block;font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;background:var(--line-2);color:var(--ink-2);white-space:nowrap}
 .chip.done{background:var(--yes-bg);color:var(--yes)}
 .chip.back{background:var(--no-bg);color:var(--no)}
+.chip.wait{background:var(--warn-bg);color:var(--warn)}
+.hist{list-style:none;margin:0;padding:0;font-size:14px}
+.hist li{padding:6px 0;border-bottom:1px solid var(--line-2)}
+.hist li:last-child{border-bottom:0}
+.hist .num{color:var(--muted);margin-right:6px}
+.bulk{display:flex;align-items:center;gap:10px;margin:0 0 8px}
+.stat.click{cursor:pointer;text-align:left;font:inherit}
+.stat.click:hover{border-color:var(--ink-2)}
+.stat.on{border-color:var(--warn);background:var(--warn-bg)}
+.notice.wait{background:var(--warn-bg);color:var(--warn)}
+.notice.done{background:var(--yes-bg);color:#14533D}
 .empty{padding:28px 16px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:var(--radius);background:var(--surface)}
 
 /* 표 */
@@ -288,11 +299,17 @@ function photoCount(doc) {
 function nTitles(doc) {
   return CHECKLIST.filter(c => doc.items?.[c.no]?.r === "N").map(c => c.title);
 }
+/* 상태 흐름: 작성 중(draft) → 제출(submitted, 승인 대기) → 승인 완료(approved)
+   마스터는 승인·반려(수정 요청)·승인 취소·직접 수정·삭제를 할 수 있습니다. */
 function statusChip(doc) {
-  if (doc.status === "submitted") return `<span class="chip done">제출 완료</span>`;
+  if (doc.status === "approved") return `<span class="chip done">승인 완료</span>`;
+  if (doc.status === "submitted") return `<span class="chip wait">승인 대기</span>`;
   if (doc.returned) return `<span class="chip back">수정 요청</span>`;
   return `<span class="chip">작성 중</span>`;
 }
+const statusLabel = d => d.status === "approved" ? "승인 완료" : d.status === "submitted" ? "승인 대기" : (d.returned ? "수정 요청" : "작성 중");
+const isSubmitted = d => d.status === "submitted" || d.status === "approved";
+const withHist = (d, action, note = "") => [...(d.history || []), { at: Date.now(), by: S.me?.name || "", action, ...(note ? { note } : {}) }];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function toast(msg, ms = 2600) {
@@ -477,9 +494,9 @@ async function createFirebaseApi() {
       const r = await FS.addDoc(FS.collection(db, "inspections"), { ...data, createdAt: ts(), updatedAt: ts() });
       return r.id;
     },
-    async updateInspection(id, patch, { submit = false } = {}) {
+    async updateInspection(id, patch, { stamp = "" } = {}) {
       const p = { ...patch, updatedAt: ts() };
-      if (submit) p.submittedAt = ts();
+      if (stamp) p[stamp] = ts();
       await FS.updateDoc(FS.doc(db, "inspections", id), p);
     },
     async deleteInspection(id) { await FS.deleteDoc(FS.doc(db, "inspections", id)); },
@@ -525,14 +542,17 @@ function createDemoApi() {
     db.inspections[id] = {
       storeId: code, storeCode: code, storeName: st.name, svUid: st.svUid, svName: db.members[st.svUid].name,
       visitDate: ymd(d), status, returned: false, items, special: { note: code === "BSC0009" ? "출입문 자동문 센서 오작동, 시설팀 접수 필요." : "", photos: [] },
-      summary: summarize(items), checklistVersion: CHECKLIST_VERSION, createdAt: d.getTime(), updatedAt: d.getTime(), submittedAt: d.getTime()
+      summary: summarize(items), checklistVersion: CHECKLIST_VERSION, createdAt: d.getTime(), updatedAt: d.getTime(), submittedAt: d.getTime(),
+      history: [{ at: d.getTime(), by: db.members[st.svUid].name, action: "제출" }],
+      ...(status === "approved" ? { approvedBy: "마스터 예시", approvedByUid: "demo-master", approvedAt: d.getTime() + 3600e3 } : {})
     };
+    if (status === "approved") db.inspections[id].history.push({ at: d.getTime() + 3600e3, by: "마스터 예시", action: "승인" });
   };
-  mk("BSC0007", 1, "yyyyyyyyyyyy"); mk("BSC0008", 3, "yyyyyyyyyyyn"); mk("BSC0021", 6, "yyyynyyyyyyy");
-  mk("BSC0005", 2, "yyyyyyyyyyyy"); mk("BSC0009", 4, "ynyyyyyyynyy"); mk("BSC0016", 7, "yyyyyynyyyyy");
-  mk("BSC0015", 2, "yyyyyyyynyyy"); mk("BSC0024", 5, "yyyyyyyyyyyy");
-  mk("BSC0013", 1, "yyyyyynyyyyn"); mk("BSC0014", 3, "yyyyyyyyyyyy"); mk("BSC0010", 8, "yyyynyyyyyyy");
-  mk("BSC0007", 33, "yyyyynyyyyyy"); mk("BSC0013", 36, "nyyyyyyyyyyy");
+  mk("BSC0007", 1, "yyyyyyyyyyyy"); mk("BSC0008", 3, "yyyyyyyyyyyn", "approved"); mk("BSC0021", 6, "yyyynyyyyyyy", "approved");
+  mk("BSC0005", 2, "yyyyyyyyyyyy"); mk("BSC0009", 4, "ynyyyyyyynyy", "approved"); mk("BSC0016", 7, "yyyyyynyyyyy", "approved");
+  mk("BSC0015", 2, "yyyyyyyynyyy"); mk("BSC0024", 5, "yyyyyyyyyyyy", "approved");
+  mk("BSC0013", 1, "yyyyyynyyyyn"); mk("BSC0014", 3, "yyyyyyyyyyyy", "approved"); mk("BSC0010", 8, "yyyynyyyyyyy", "approved");
+  mk("BSC0007", 33, "yyyyynyyyyyy", "approved"); mk("BSC0013", 36, "nyyyyyyyyyyy", "approved");
 
   return {
     mode: "demo",
@@ -557,9 +577,9 @@ function createDemoApi() {
     },
     async getInspection(id) { await wait(); return db.inspections[id] ? { id, ...clone(db.inspections[id]) } : null; },
     async createInspection(data) { await wait(); const id = nid("ins"); db.inspections[id] = { ...clone(data), createdAt: Date.now(), updatedAt: Date.now() }; return id; },
-    async updateInspection(id, patch, { submit = false } = {}) {
+    async updateInspection(id, patch, { stamp = "" } = {}) {
       await wait();
-      Object.assign(db.inspections[id], clone(patch), { updatedAt: Date.now() }, submit ? { submittedAt: Date.now() } : {});
+      Object.assign(db.inspections[id], clone(patch), { updatedAt: Date.now() }, stamp ? { [stamp]: Date.now() } : {});
     },
     async deleteInspection(id) { await wait(); delete db.inspections[id]; },
     async uploadPhoto(blob) { await sleep(500); const u = URL.createObjectURL(blob); return { id: nid("ph"), url: u, thumb: u, big: u }; },
@@ -658,7 +678,7 @@ async function router() {
   try {
     if (parts[0] === "" ) return await viewHome();
     if (parts[0] === "new") return await viewNew();
-    if (parts[0] === "i" && parts[1]) return await viewInspection(parts[1]);
+    if (parts[0] === "i" && parts[1]) return await viewInspection(parts[1], parts[2] === "edit");
     if (parts[0] === "admin" && isMaster()) {
       if (!parts[1]) return await viewAdminList();
       if (parts[1] === "stats") return await viewAdminStats();
@@ -739,8 +759,8 @@ async function viewHome() {
   shell(`<p class="muted">불러오는 중…</p>`, { active: "#/", narrow: true });
   const list = (await api.listMyInspections(S.me.uid))
     .sort((a, b) => (b.visitDate || "").localeCompare(a.visitDate || "") || (Number(b.updatedAt?.seconds || b.updatedAt || 0) - Number(a.updatedAt?.seconds || a.updatedAt || 0)));
-  const drafts = list.filter(d => d.status !== "submitted");
-  const done = list.filter(d => d.status === "submitted");
+  const drafts = list.filter(d => !isSubmitted(d));
+  const done = list.filter(isSubmitted);
   const monthDone = done.filter(d => d.visitDate?.startsWith(thisMonth())).length;
   const row = d => {
     const sm = d.summary || summarize(d.items);
@@ -808,14 +828,16 @@ async function viewNew() {
 /* =====================================================================
    9. 점검 작성·보기
    ===================================================================== */
-async function viewInspection(id) {
+async function viewInspection(id, editReq = false) {
   shell(`<p class="muted">불러오는 중…</p>`, { narrow: true });
   const doc = await api.getInspection(id);
   if (!doc) { shell(`<div class="empty">점검을 찾을 수 없습니다.<br><br><a class="btn sm" href="#/">내 점검으로</a></div>`, { narrow: true }); return; }
   doc.items = doc.items || emptyItems();
   doc.special = doc.special || { note: "", photos: [] };
   const own = doc.svUid === S.me.uid;
-  const canEdit = own && doc.status !== "submitted";
+  const ownDraft = own && doc.status === "draft";
+  const masterEdit = isMaster() && editReq && !ownDraft;   // 마스터 직접 수정 모드
+  const canEdit = ownDraft || masterEdit;
 
   const ed = { id, doc, canEdit, dirty: false, saving: false, timer: null, uploading: 0, lastSaved: null, failed: false, pend: {} };
 
@@ -889,20 +911,34 @@ async function viewInspection(id) {
   const dock = canEdit ? `<div class="dock"><div class="dock-in">
       <div class="rail" id="rail">${railHtml()}</div>
       <div class="dock-row"><div class="st" id="st">${statusText()}</div>
-        <button class="btn primary" id="submit">제출하기</button></div></div></div>` : "";
+        ${masterEdit ? `<button class="btn primary" id="finishEdit">수정 완료</button>` : `<button class="btn primary" id="submit">제출하기</button>`}</div></div></div>` : "";
 
-  const masterActs = isMaster() && !own
-    ? `<div class="row" style="margin:12px 0 0">${doc.status === "submitted" ? `<button class="btn" id="ret">수정 요청</button>` : ""}<button class="btn danger" id="delm">점검 삭제</button></div>` : "";
-  const ownDraftActs = canEdit ? `<button class="btn sm ghost danger" id="deld" style="margin-left:auto">이 점검 삭제</button>` : "";
+  let acts = "";
+  if (!canEdit && isMaster()) {
+    if (doc.status === "submitted") acts = `<button class="btn primary" id="approve">승인</button><button class="btn" id="ret">반려 (수정 요청)</button><button class="btn" id="medit">직접 수정</button><button class="btn danger" id="delm">삭제</button>`;
+    else if (doc.status === "approved") acts = `<button class="btn" id="unapprove">승인 취소</button><button class="btn" id="medit">직접 수정</button><button class="btn danger" id="delm">삭제</button>`;
+    else acts = `<button class="btn danger" id="delm">삭제</button>`;
+  } else if (!canEdit && own && doc.status === "submitted") {
+    acts = `<button class="btn" id="svEdit">수정하기</button><button class="btn danger" id="svDel">삭제</button>`;
+  }
+  const masterActs = acts ? `<div class="row" style="margin:12px 0 0">${acts}</div>` : "";
+  const ownDraftActs = ownDraft ? `<button class="btn sm ghost danger" id="deld" style="margin-left:auto">이 점검 삭제</button>` : "";
+  const stateNotice =
+    masterEdit ? `<div class="notice wait"><b>마스터 수정 중</b>: 고친 내용은 바로 저장되고 처리 이력에 남습니다. 다 고쳤으면 아래 '수정 완료'를 누르세요.</div>`
+    : doc.status === "approved" ? `<div class="notice done"><b>승인 완료</b>${doc.approvedBy ? `: ${esc(doc.approvedBy)}` : ""}${doc.approvedAt ? `, ${fmtTs(doc.approvedAt)}` : ""}${!isMaster() ? "<br>승인된 점검은 마스터만 고칠 수 있습니다. 수정이 필요하면 마스터에게 요청하세요." : ""}</div>`
+    : doc.status === "submitted" ? `<div class="notice wait"><b>마스터 승인 대기 중</b>${own && !isMaster() ? "<br>승인 전까지는 '수정하기'로 고치거나 삭제할 수 있습니다." : ""}</div>` : "";
+  const histHtml = (doc.history || []).length ? `<h2>처리 이력</h2><div class="panel"><ul class="hist">${[...doc.history].reverse().map(h =>
+    `<li><span class="num">${fmtTs(h.at)}</span><b>${esc(h.action)}</b> ${esc(h.by || "")}${h.note ? `: ${esc(h.note)}` : ""}</li>`).join("")}</ul></div>` : "";
   const ownBack = isMaster() ? "#/admin" : "#/";
   const sm = summarize(doc.items);
 
   shell(`
-    <p style="margin:0 0 6px"><a class="small muted" href="${own ? "#/" : ownBack}">목록으로</a></p>
+    <p style="margin:0 0 6px"><a class="small muted" href="${masterEdit ? "#/i/" + esc(id) : (own ? "#/" : ownBack)}">${masterEdit ? "보기 화면으로" : "목록으로"}</a></p>
     <div class="ins-head"><h1>${esc(doc.storeName)}</h1>${statusChip(doc)}${ownDraftActs}</div>
-    <div class="ins-meta">${fmtDate(doc.visitDate)} 방문, 점검자 ${esc(doc.svName || "")}${doc.submittedAt && doc.status === "submitted" ? `, 제출 ${fmtTs(doc.submittedAt)}` : ""}</div>
+    <div class="ins-meta">${fmtDate(doc.visitDate)} 방문, 점검자 ${esc(doc.svName || "")}${doc.submittedAt && isSubmitted(doc) ? `, 제출 ${fmtTs(doc.submittedAt)}` : ""}</div>
     ${!canEdit ? `<div class="notice info">준수 <b class="num">${sm.y}/${sm.total}</b> (준수율 <b class="num">${sm.rate}%</b>), 미흡 ${sm.n}건, 사진 ${photoCount(doc)}장</div>` : ""}
-    ${doc.returned && doc.status !== "submitted" ? `<div class="notice back"><b>수정 요청</b>${doc.returnNote ? `: ${esc(doc.returnNote)}` : ""}</div>` : ""}
+    ${stateNotice}
+    ${doc.returned && doc.status === "draft" ? `<div class="notice back"><b>수정 요청</b>${doc.returnNote ? `: ${esc(doc.returnNote)}` : ""}</div>` : ""}
     ${masterActs}
     ${!canEdit ? `<label class="small" style="display:inline-flex;gap:6px;align-items:center;margin-top:14px"><input type="checkbox" id="onlyFlag"> 미흡이거나 비고·사진이 있는 문항만 보기</label>` : ""}
     ${CATEGORIES.map(cat => {
@@ -911,6 +947,7 @@ async function viewInspection(id) {
         <div class="c num" data-catc="${cat.key}"></div></div>${its.map(itemHtml).join("")}</div>`;
     }).join("")}
     ${specialHtml()}
+    ${histHtml}
   `, { narrow: true, dock });
 
   const updateCatCounts = () => CATEGORIES.forEach(cat => {
@@ -939,18 +976,42 @@ async function viewInspection(id) {
   });
 
   $("#onlyFlag")?.addEventListener("change", e => $("main").classList.toggle("only-flag", e.target.checked));
-  if (isMaster() && !own) {
-    $("#ret")?.addEventListener("click", async () => {
-      const note = await modal({ title: "수정 요청", body: "점검자에게 보낼 요청 내용을 적어 주세요. 점검은 '작성 중'으로 돌아갑니다.", ok: "수정 요청 보내기", input: { placeholder: "예: 3번 사진 추가 필요" } });
-      if (note === null) return;
-      await api.updateInspection(id, { status: "draft", returned: true, returnNote: note, returnedBy: S.me.name });
-      toast("수정 요청을 보냈습니다."); router();
-    });
-    $("#delm")?.addEventListener("click", async () => {
-      if (!await modal({ title: "점검을 삭제할까요?", body: "삭제한 점검은 되돌릴 수 없습니다. 드라이브의 사진 파일은 남습니다.", ok: "삭제", danger: true })) return;
-      await api.deleteInspection(id); toast("삭제했습니다."); location.hash = "#/admin";
-    });
-  }
+  const act = (sel, fn) => $(sel)?.addEventListener("click", async e => {
+    e.target.disabled = true;
+    try { await fn(); } catch (err) { console.error(err); toast(friendlyError(err), 4000); e.target.disabled = false; }
+  });
+  const clearApproval = { approvedAt: null, approvedBy: "", approvedByUid: "" };
+  // 마스터: 승인 / 반려 / 승인 취소 / 직접 수정 / 삭제
+  act("#approve", async () => {
+    await api.updateInspection(id, { status: "approved", approvedBy: S.me.name || "", approvedByUid: S.me.uid, history: withHist(doc, "승인") }, { stamp: "approvedAt" });
+    toast("승인했습니다."); router();
+  });
+  act("#ret", async () => {
+    const note = await modal({ title: "반려 (수정 요청)", body: "점검자에게 보낼 요청 내용을 적어 주세요. 점검은 '작성 중'으로 돌아가고, 점검자가 고쳐서 다시 제출합니다.", ok: "반려하기", input: { placeholder: "예: 3번 사진 추가 필요" } });
+    if (note === null) { $("#ret").disabled = false; return; }
+    await api.updateInspection(id, { status: "draft", returned: true, returnNote: note, returnedBy: S.me.name || "", ...clearApproval, history: withHist(doc, "반려", note) });
+    toast("반려했습니다. 점검자 화면에 수정 요청으로 표시됩니다."); router();
+  });
+  act("#unapprove", async () => {
+    if (!await modal({ title: "승인을 취소할까요?", body: "점검이 '승인 대기'로 돌아갑니다. 이후 직접 수정하거나 반려할 수 있습니다.", ok: "승인 취소" })) { $("#unapprove").disabled = false; return; }
+    await api.updateInspection(id, { status: "submitted", ...clearApproval, history: withHist(doc, "승인 취소") });
+    toast("승인을 취소했습니다."); router();
+  });
+  act("#medit", async () => { location.hash = `#/i/${id}/edit`; });
+  act("#delm", async () => {
+    if (!await modal({ title: "점검을 삭제할까요?", body: "삭제한 점검은 되돌릴 수 없습니다. 드라이브의 사진 파일은 남습니다.", ok: "삭제", danger: true })) { $("#delm").disabled = false; return; }
+    await api.deleteInspection(id); toast("삭제했습니다."); location.hash = isMaster() ? "#/admin" : "#/";
+  });
+  // SV: 승인 대기 중인 본인 점검 수정·삭제
+  act("#svEdit", async () => {
+    if (!await modal({ title: "제출을 취소하고 수정할까요?", body: "점검이 '작성 중'으로 돌아갑니다. 고친 뒤 다시 제출해야 마스터가 승인할 수 있습니다.", ok: "수정하기" })) { $("#svEdit").disabled = false; return; }
+    await api.updateInspection(id, { status: "draft", returned: false, history: withHist(doc, "제출 취소(수정)") });
+    router();
+  });
+  act("#svDel", async () => {
+    if (!await modal({ title: "이 점검을 삭제할까요?", body: "삭제한 점검은 되돌릴 수 없습니다.", ok: "삭제", danger: true })) { $("#svDel").disabled = false; return; }
+    await api.deleteInspection(id); toast("삭제했습니다."); location.hash = "#/";
+  });
   if (!canEdit) return;
 
   /* --- 편집 동작 --- */
@@ -963,7 +1024,11 @@ async function viewInspection(id) {
     if (ed.saving) { ed.dirty = true; return; }
     ed.saving = true; ed.dirty = false; ed.failed = false; refreshDock();
     try {
-      await api.updateInspection(id, { items: doc.items, special: doc.special, summary: summarize(doc.items) });
+      const patch = { items: doc.items, special: doc.special, summary: summarize(doc.items) };
+      const hist = masterEdit && !ed.logged ? withHist(doc, "마스터 수정") : null;   // 마스터 수정은 한 번만 이력에 남김
+      if (hist) patch.history = hist;
+      await api.updateInspection(id, patch);
+      if (hist) { doc.history = hist; ed.logged = true; }
       ed.lastSaved = new Date();
     } catch (e) { console.error(e); ed.failed = true; ed.dirty = true; toast("저장하지 못했습니다. " + friendlyError(e)); }
     ed.saving = false; refreshDock();
@@ -971,6 +1036,11 @@ async function viewInspection(id) {
   };
   const schedule = (ms = 800) => { ed.dirty = true; clearTimeout(ed.timer); ed.timer = setTimeout(save, ms); refreshDock(); };
   const renderPhotos = key => { const box = $(`[data-photos="${key}"]`); if (box) box.innerHTML = photosHtml(key); };
+  const flush = async () => {
+    if (ed.dirty) await save();
+    while ((ed.saving || ed.dirty) && !ed.failed) await sleep(150);
+    return !ed.failed;
+  };
 
   leaveGuard = {
     nav: () => { if (ed.dirty && !ed.saving && !ed.failed) save(); return ed.uploading > 0 || ed.failed; },
@@ -1008,6 +1078,7 @@ async function viewInspection(id) {
       return;
     }
     if (e.target.id === "submit") submit();
+    if (e.target.id === "finishEdit") finishEdit();
   });
 
   view.addEventListener("input", e => {
@@ -1046,6 +1117,22 @@ async function viewInspection(id) {
     save();
   });
 
+  async function finishEdit() {
+    const sm = summarize(doc.items);
+    if (doc.status !== "draft" && sm.answered < sm.total) {
+      const miss = CHECKLIST.filter(c => !doc.items[c.no]?.r);
+      toast(`제출된 점검이라 모든 문항에 응답이 있어야 합니다. 비어 있는 문항 ${miss.length}개`);
+      $(`#item-${miss[0].no}`)?.scrollIntoView({ block: "start" });
+      return;
+    }
+    if (ed.uploading) { toast("사진을 다 올린 뒤 눌러 주세요."); return; }
+    $("#finishEdit").disabled = true;
+    if (!await flush()) { $("#finishEdit").disabled = false; toast("저장하지 못했습니다. 연결을 확인한 뒤 다시 눌러 주세요."); return; }
+    leaveGuard = null;
+    toast(ed.logged ? "수정 내용을 저장했습니다." : "바뀐 내용이 없습니다.");
+    location.hash = `#/i/${id}`;
+  }
+
   async function submit() {
     const sm = summarize(doc.items);
     if (sm.answered < sm.total) {
@@ -1058,14 +1145,15 @@ async function viewInspection(id) {
     const noNote = CHECKLIST.filter(c => doc.items[c.no].r === "N" && !doc.items[c.no].note.trim());
     const body = `준수 ${sm.y}개, 미흡 ${sm.n}개입니다.` +
       (noNote.length ? `\n\n비고가 비어 있는 미흡 문항: ${noNote.map(c => c.title).join(", ")}\n미흡 사유를 적어 두면 개선 확인이 쉬워집니다.` : "") +
-      "\n\n제출하면 관리자가 수정 요청을 보내기 전까지 고칠 수 없습니다.";
+      "\n\n제출하면 마스터 승인 대기 상태가 됩니다. 승인 전까지는 '수정하기'로 고칠 수 있고, 승인된 뒤에는 마스터만 고칠 수 있습니다.";
     if (!await modal({ title: "점검을 제출할까요?", body: esc(body), ok: "제출하기" })) return;
     clearTimeout(ed.timer);
     $("#submit").disabled = true;
     try {
-      await api.updateInspection(id, { items: doc.items, special: doc.special, summary: summarize(doc.items), status: "submitted", returned: false }, { submit: true });
+      await api.updateInspection(id, { items: doc.items, special: doc.special, summary: summarize(doc.items), status: "submitted", returned: false,
+        history: withHist(doc, (doc.history || []).some(h => h.action === "제출" || h.action === "재제출") ? "재제출" : "제출") }, { stamp: "submittedAt" });
       ed.dirty = false; leaveGuard = null;
-      toast("제출했습니다.");
+      toast("제출했습니다. 마스터 승인을 기다립니다.");
       location.hash = "#/";
     } catch (e) { $("#submit").disabled = false; toast("제출하지 못했습니다. " + friendlyError(e), 4000); }
   }
@@ -1084,8 +1172,9 @@ async function viewAdminList() {
   const rows = all.filter(d =>
     (!adminFilter.store || d.storeId === adminFilter.store) &&
     (!adminFilter.sv || d.svUid === adminFilter.sv) &&
-    (!adminFilter.status || (adminFilter.status === "submitted" ? d.status === "submitted" : d.status !== "submitted")));
-  const sub = rows.filter(d => d.status === "submitted");
+    (!adminFilter.status || (adminFilter.status === "draft" ? !isSubmitted(d) : d.status === adminFilter.status)));
+  const sub = rows.filter(isSubmitted);
+  const waiting = rows.filter(d => d.status === "submitted");
   const avg = sub.length ? Math.round(sub.reduce((a, d) => a + (d.summary?.rate ?? summarize(d.items).rate), 0) / sub.length) : null;
   const visited = new Set(sub.map(d => d.storeId));
   const activeStores = S.stores.filter(s => s.active !== false);
@@ -1098,20 +1187,25 @@ async function viewAdminList() {
       <div><label class="f" for="fs" style="margin-top:0">매장</label><select class="in" id="fs"><option value="">전체 매장</option>${S.stores.map(s => `<option value="${esc(s.id)}" ${s.id === adminFilter.store ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></div>
       <div><label class="f" for="fv" style="margin-top:0">점검자</label><select class="in" id="fv"><option value="">전체</option>${svs.map(m => `<option value="${esc(m.uid)}" ${m.uid === adminFilter.sv ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select></div>
       <div><label class="f" for="ft" style="margin-top:0">상태</label><select class="in" id="ft">
-        <option value="">전체</option><option value="submitted" ${adminFilter.status === "submitted" ? "selected" : ""}>제출 완료</option><option value="draft" ${adminFilter.status === "draft" ? "selected" : ""}>작성 중</option></select></div>
+        <option value="">전체</option>
+        <option value="submitted" ${adminFilter.status === "submitted" ? "selected" : ""}>승인 대기</option>
+        <option value="approved" ${adminFilter.status === "approved" ? "selected" : ""}>승인 완료</option>
+        <option value="draft" ${adminFilter.status === "draft" ? "selected" : ""}>작성 중</option></select></div>
       <button class="btn" id="xl">엑셀로 내려받기</button>
     </div></div>
     <div class="stats">
-      <div class="stat"><b class="num">${sub.length}</b><span>제출된 점검</span></div>
+      <button class="stat click ${adminFilter.status === "submitted" ? "on" : ""}" id="waitCard" type="button"><b class="num">${waiting.length}</b><span>승인 대기 (눌러서 보기)</span></button>
+      <div class="stat"><b class="num">${sub.length}</b><span>제출된 점검 (승인 대기 포함)</span></div>
       <div class="stat"><b class="num">${avg === null ? "-" : avg + "%"}</b><span>평균 준수율</span></div>
       <div class="stat"><b class="num">${visited.size}/${activeStores.length}</b><span>방문한 매장</span></div>
-      <div class="stat"><b class="num">${rows.length - sub.length}</b><span>작성 중</span></div>
     </div>
+    ${waiting.length ? `<div class="bulk"><button class="btn primary sm" id="bulk" disabled>선택한 점검 승인</button><span class="muted small">승인 대기 점검은 왼쪽 칸을 체크해 한 번에 승인할 수 있습니다.</span></div>` : ""}
     ${rows.length ? `<div class="tbl-wrap"><table>
-      <thead><tr><th>방문일</th><th>매장</th><th>점검자</th><th class="r">준수</th><th>미흡 문항</th><th class="r">사진</th><th>상태</th></tr></thead>
+      <thead><tr><th>${waiting.length ? `<input type="checkbox" id="pickAll" aria-label="승인 대기 전체 선택">` : ""}</th><th>방문일</th><th>매장</th><th>점검자</th><th class="r">준수</th><th>미흡 문항</th><th class="r">사진</th><th>상태</th></tr></thead>
       <tbody>${rows.map(d => {
         const sm = d.summary || summarize(d.items);
         return `<tr class="click" data-open="${esc(d.id)}" tabindex="0">
+          <td>${d.status === "submitted" ? `<input type="checkbox" data-pick="${esc(d.id)}" aria-label="${esc(d.storeName)} 승인 선택">` : ""}</td>
           <td class="num">${esc(d.visitDate)}</td><td>${esc(d.storeName)}</td><td>${esc(d.svName || memberName(d.svUid))}</td>
           <td class="r num">${sm.y}/${sm.total}</td><td class="wrap">${esc(nTitles(d).join(", ") || "-")}</td>
           <td class="r num">${photoCount(d)}</td><td>${statusChip(d)}</td></tr>`;
@@ -1124,9 +1218,30 @@ async function viewAdminList() {
     viewAdminList();
   };
   ["#fm", "#fs", "#fv", "#ft"].forEach(s => $(s).addEventListener("change", refilter));
+  $("#waitCard").addEventListener("click", () => { adminFilter.status = adminFilter.status === "submitted" ? "" : "submitted"; viewAdminList(); });
   $$("[data-open]").forEach(tr => {
-    tr.addEventListener("click", () => location.hash = "#/i/" + tr.dataset.open);
-    tr.addEventListener("keydown", e => { if (e.key === "Enter") location.hash = "#/i/" + tr.dataset.open; });
+    tr.addEventListener("click", e => { if (e.target.closest("input")) return; location.hash = "#/i/" + tr.dataset.open; });
+    tr.addEventListener("keydown", e => { if (e.key === "Enter" && !e.target.closest("input")) location.hash = "#/i/" + tr.dataset.open; });
+  });
+  const picks = () => $$("[data-pick]").filter(c => c.checked).map(c => c.dataset.pick);
+  const syncBulk = () => { const n = picks().length; const b = $("#bulk"); if (b) { b.disabled = !n; b.textContent = n ? `선택한 ${n}건 승인` : "선택한 점검 승인"; } };
+  $$("[data-pick]").forEach(c => c.addEventListener("change", syncBulk));
+  $("#pickAll")?.addEventListener("change", e => { $$("[data-pick]").forEach(c => { c.checked = e.target.checked; }); syncBulk(); });
+  $("#bulk")?.addEventListener("click", async () => {
+    const ids = picks();
+    if (!ids.length) return;
+    if (!await modal({ title: `${ids.length}건을 승인할까요?`, body: "승인한 점검은 SV가 고칠 수 없습니다. 필요하면 상세 화면에서 승인을 취소할 수 있습니다.", ok: "승인" })) return;
+    $("#bulk").disabled = true;
+    let ok = 0;
+    for (const id of ids) {
+      const d = rows.find(x => x.id === id);
+      try {
+        await api.updateInspection(id, { status: "approved", approvedBy: S.me.name || "", approvedByUid: S.me.uid, history: withHist(d, "승인") }, { stamp: "approvedAt" });
+        ok++;
+      } catch (e) { console.error(e); }
+    }
+    toast(ok === ids.length ? `${ok}건을 승인했습니다.` : `${ok}건 승인, ${ids.length - ok}건은 실패했습니다. 다시 시도해 주세요.`, 3500);
+    viewAdminList();
   });
   $("#xl").addEventListener("click", () => exportExcel(rows, adminFilter.month));
 }
@@ -1134,15 +1249,16 @@ async function viewAdminList() {
 function exportExcel(rows, month) {
   const head = ["방문일", "매장코드", "매장", "점검자", "상태", "준수", "미흡", "준수율(%)"];
   CHECKLIST.forEach(c => head.push(`${c.no}.${c.title} 결과`, `${c.no}.${c.title} 비고`, `${c.no}.${c.title} 사진`));
-  head.push("매장 특이사항", "특이사항 사진", "제출 일시", "점검 문항 버전");
+  head.push("매장 특이사항", "특이사항 사진", "제출 일시", "승인자", "승인 일시", "점검 문항 버전");
   const data = rows.map(d => {
     const sm = d.summary || summarize(d.items);
-    const r = [d.visitDate, d.storeCode || d.storeId, d.storeName, d.svName || memberName(d.svUid), d.status === "submitted" ? "제출 완료" : (d.returned ? "수정 요청" : "작성 중"), sm.y, sm.n, sm.rate];
+    const r = [d.visitDate, d.storeCode || d.storeId, d.storeName, d.svName || memberName(d.svUid), statusLabel(d), sm.y, sm.n, sm.rate];
     CHECKLIST.forEach(c => {
       const it = d.items?.[c.no] || {};
       r.push(it.r || "", it.note || "", (it.photos || []).map(p => p.url).join("\n"));
     });
-    r.push(d.special?.note || "", (d.special?.photos || []).map(p => p.url).join("\n"), d.status === "submitted" ? fmtTs(d.submittedAt) : "", d.checklistVersion || "");
+    r.push(d.special?.note || "", (d.special?.photos || []).map(p => p.url).join("\n"), isSubmitted(d) ? fmtTs(d.submittedAt) : "",
+      d.status === "approved" ? (d.approvedBy || "") : "", d.status === "approved" ? fmtTs(d.approvedAt) : "", d.checklistVersion || "");
     return r;
   });
   const name = `벤슨_매장점검_${month}`;
@@ -1168,7 +1284,7 @@ async function viewAdminStats() {
   shell(`<p class="muted">불러오는 중…</p>`, { active: "#/admin/stats" });
   await Promise.all([loadStores(), loadMembers()]);
   const { from, to } = monthRange(adminFilter.month);
-  const sub = (await api.listInspections(from, to)).filter(d => d.status === "submitted");
+  const sub = (await api.listInspections(from, to)).filter(isSubmitted);
   const activeStores = S.stores.filter(s => s.active !== false);
 
   const byStore = activeStores.map(s => {
@@ -1220,7 +1336,7 @@ async function viewAdminStats() {
         <thead><tr><th>문항</th><th class="r">미흡</th><th style="width:40%"></th></tr></thead>
         <tbody>${byItem.map(x => `<tr><td>${x.c.no}. ${esc(x.c.title)}</td><td class="r num">${x.n}건${sub.length ? ` (${x.pct}%)` : ""}</td>
           <td><div class="bar"><i style="width:${Math.round(x.n / maxN * 100)}%"></i></div></td></tr>`).join("")}</tbody></table></div>
-        <p class="muted small" style="margin-top:8px">제출된 점검 ${sub.length}건 기준입니다.</p>
+        <p class="muted small" style="margin-top:8px">제출된 점검 ${sub.length}건 기준입니다 (승인 대기 ${sub.filter(d => d.status === "submitted").length}건 포함).</p>
       </div>
     </div>
   `, { active: "#/admin/stats" });
